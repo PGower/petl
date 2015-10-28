@@ -33,3 +33,5 @@ from petl.io.whoosh import fromtextindex, searchtextindex, \
     searchtextindexpage, totextindex, appendtextindex
 
 from petl.io.django import fromdjango, todjango
+
+from petl.io.ldap3 import fromldap
