@@ -43,6 +43,7 @@ class LdapView(Table):
 
 
 def _iter_ldap_query(connection, base_ou, query, attributes, scope, page_size):
+    connection.bind()
     connection.search(search_base=base_ou, search_filter=query, search_scope=scope, attributes=attributes, paged_size=page_size, paged_cookie=None)
     logger.debug('Connection.search.response is: {}'.format(connection.response))
     if len(connection.response) < page_size:
@@ -54,7 +55,9 @@ def _iter_ldap_query(connection, base_ou, query, attributes, scope, page_size):
             connection.search(search_base=base_ou, search_filter=filter, search_scope=scope, attributes=attributes, paged_size=page_size, paged_cookie=cookie)
             results += connection.response
             cookie = connection.result['controls']['1.2.840.113556.1.4.319']['value']['cookie']
+    connection.unbind()
     # Headers
     yield attributes
     for result in results:
         yield [result[a] for a in attributes]
+
