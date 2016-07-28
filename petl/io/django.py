@@ -27,26 +27,30 @@ debug = logger.debug
 warning = logger.warning
 
 
-def fromdjango(model, queryset, *args, **kwargs):
+def fromdjango(model, queryset, fields=None, *args, **kwargs):
     assert type(queryset) == QuerySet, 'Must be supplied a Django QuerySet'
     assert issubclass(model, Model), 'Must be supplied a valid Django model class'
 
-    return DjangoView(model, queryset, *args, **kwargs)
+    return DjangoView(model, queryset, fields, *args, **kwargs)
 
 
 class DjangoView(Table):
-    def __init__(self, model, queryset, *args, **kwargs):
+    def __init__(self, model, queryset, fields, *args, **kwargs):
         self.model = model
         self.queryset = queryset
+        self.fields = fields
         self.args = args
         self.kwargs = kwargs
 
     def __iter__(self):
-        return _iter_django_model(self.model, self.queryset)
+        return _iter_django_model(self.model, self.queryset, self.fields)
 
 
-def _iter_django_model(model, queryset, *args, **kwargs):
-    column_names = _get_model_column_names(model)
+def _iter_django_model(model, queryset, fields, *args, **kwargs):
+    if fields is None:
+        column_names = _get_model_column_names(model)
+    else:
+        column_names = fields
     yield column_names
     for r in queryset.all().values_list(*column_names):
         yield r
@@ -73,7 +77,7 @@ def todjango(table, model, update=True, create=True, use_bulk_create=True, *args
     model_name = model.__name__
 
     existing_models = _get_django_objects(model)
-    existing_model_map = dict([(m.pk, m) for m in existing_models])    
+    existing_model_map = dict([(m.pk, m) for m in existing_models])
 
     if update:
         # if we are going to update existing models we need to have a table field that
@@ -92,14 +96,23 @@ def todjango(table, model, update=True, create=True, use_bulk_create=True, *args
             django_object = existing_model_map[pk]
             if _will_model_change(value_map, django_object):
                 _apply_value_map(value_map, django_object)
-                django_object.save()
+                try:
+                    django_object.save()
+                except Exception as e:
+                    # Add the data that cause the exception to the exception as reraise
+                    e.petl_data = value_map
+                    raise e
                 updated_model_count += 1
         except KeyError:
             django_object = model(**value_map)
             if use_bulk_create:
                 unsaved_models.append(django_object)
             else:
-                django_object.save()
+                try:
+                    django_object.save()
+                except Exception as e:
+                    e.petl_data = value_map
+                    raise e
     logger.debug('Bulk creating unsaved {}'.format(model_name))
     if use_bulk_create:
         _chunked_bulk_create(model, unsaved_models)
@@ -128,7 +141,12 @@ def _chunked_bulk_create(django_model_object, unsaved_models, chunk_size=None):
     if chunk_size is None:
         chunk_size = getattr(settings, 'BULK_CREATE_CHUNK_SIZE', 50)
     for i in range(0, len(unsaved_models), chunk_size):
-        django_model_object.objects.bulk_create(unsaved_models[i:i + chunk_size])
+        try:
+            django_model_object.objects.bulk_create(unsaved_models[i:i + chunk_size])
+        except Exception as e:
+            chunk_data = unsaved_models[i:i + chunk_size]
+            e.petl_chunk_data = chunk_data
+            raise e
 
 
 def _will_model_change(value_map, django_model_instance):
